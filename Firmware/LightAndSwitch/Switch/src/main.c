@@ -213,8 +213,6 @@ static void button_event_handler(uint32_t button_number)
     model_transition_t transition_params;
     static uint8_t tid = 0;
 
-    /* Button 1: ON, Button 2: Off, Client[0]
-     */
     if(is_light_on == false)
     {
         set_params.on_off = APP_STATE_ON;
