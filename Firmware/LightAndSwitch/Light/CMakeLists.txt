@@ -1,4 +1,4 @@
-set(target "light_switch_proxy_server_${PLATFORM}_${SOFTDEVICE}")
+set(target "light_switch_server_${PLATFORM}_${SOFTDEVICE}")
 
 add_executable(${target}
     "${CMAKE_CURRENT_SOURCE_DIR}/src/main.c"
@@ -8,28 +8,20 @@ add_executable(${target}
     "${MBTLE_SOURCE_DIR}/examples/common/src/rtt_input.c"
     "${CMAKE_SOURCE_DIR}/examples/common/src/simple_hal.c"
     "${CMAKE_SOURCE_DIR}/examples/common/src/mesh_app_utils.c"
-    "${CMAKE_SOURCE_DIR}/examples/common/src/mesh_adv.c"
-    "${CMAKE_SOURCE_DIR}/mesh/prov/src/nrf_mesh_prov_bearer_gatt.c"
-    "${CMAKE_SOURCE_DIR}/external/sdk_fix/nrf_sdh.c"
-    "${SDK_ROOT}/components/libraries/util/app_util_platform.c"
-    "${SDK_ROOT}/components/ble/common/ble_advdata.c"
-    "${SDK_ROOT}/components/libraries/experimental_section_vars/nrf_section_iter.c"
-    "${SDK_ROOT}/components/softdevice/common/nrf_sdh_soc.c"
-    "${SDK_ROOT}/components/softdevice/common/nrf_sdh_ble.c"
-    "${SDK_ROOT}/components/ble/common/ble_conn_params.c"
-    "${SDK_ROOT}/components/libraries/timer/app_timer.c"
-    "${SDK_ROOT}/components/libraries/atomic/nrf_atomic.c"
-    "${SDK_ROOT}/components/ble/common/ble_srv_common.c"
+    ${BLE_SOFTDEVICE_SUPPORT_SOURCE_FILES}
     ${WEAK_SOURCE_FILES}
     ${MESH_CORE_SOURCE_FILES}
     ${MESH_BEARER_SOURCE_FILES}
     ${MESH_GATT_SOURCE_FILES}
-    ${GENERIC_ONOFF_SERVER_SOURCE_FILES}
     ${CONFIG_SERVER_SOURCE_FILES}
     ${HEALTH_SERVER_SOURCE_FILES}
+    ${GENERIC_ONOFF_SERVER_SOURCE_FILES}
     ${ACCESS_SOURCE_FILES}
+    ${MESH_APP_TIMER_SOURCE_FILES}
     ${PROV_PROVISIONEE_SOURCE_FILES}
     ${PROV_COMMON_SOURCE_FILES}
+    ${PROV_BEARER_ADV_SOURCE_FILES}
+    ${PROV_BEARER_GATT_SOURCE_FILES}
     ${${PLATFORM}_SOURCE_FILES}
     ${${nRF5_SDK_VERSION}_SOURCE_FILES})
 
@@ -38,18 +30,10 @@ target_include_directories(${target} PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/../include"
     "${CMAKE_SOURCE_DIR}/examples/common/include"
     "${CMAKE_SOURCE_DIR}/external/rtt/include"
-    "${SDK_ROOT}/components/drivers_nrf/delay"
-    "${SDK_ROOT}/components/ble/common"
-    "${SDK_ROOT}/components/softdevice/common"
-    "${SDK_ROOT}/components/libraries/experimental_section_vars"
-    "${SDK_ROOT}/components/libraries/experimental_log"
-    "${SDK_ROOT}/components/libraries/experimental_log/src"
-    "${SDK_ROOT}/components/libraries/strerror"
-    "${SDK_ROOT}/components/libraries/atomic"
-    ${GENERIC_ONOFF_SERVER_INCLUDE_DIRS}
+    ${BLE_SOFTDEVICE_SUPPORT_INCLUDE_DIRS}
     ${CONFIG_SERVER_INCLUDE_DIRS}
     ${HEALTH_SERVER_INCLUDE_DIRS}
-    ${MESH_GATT_INCLUDE_DIRS}
+    ${GENERIC_ONOFF_SERVER_INCLUDE_DIRS}
     ${MESH_INCLUDE_DIRS}
     ${${SOFTDEVICE}_INCLUDE_DIRS}
     ${${PLATFORM}_INCLUDE_DIRS}
@@ -65,8 +49,6 @@ target_compile_options(${target} PUBLIC
 target_compile_definitions(${target} PUBLIC
     ${USER_DEFINITIONS}
     -DUSE_APP_CONFIG
-    -DMESH_FEATURE_GATT=1
-    -DGATT_PROXY=1
     -DCONFIG_APP_IN_CORE
     ${${PLATFORM}_DEFINES}
     ${${SOFTDEVICE}_DEFINES}

@@ -44,24 +44,16 @@
 #include "app_timer.h"
 
 /* Core */
+#include "nrf_mesh_config_core.h"
 #include "nrf_mesh_configure.h"
 #include "nrf_mesh.h"
 #include "mesh_stack.h"
 #include "device_state_manager.h"
 #include "access_config.h"
-#include "sdk_config.h"
-#include "mesh_adv.h"
-#include "nrf_sdh.h"
-#include "nrf_sdh_ble.h"
-#include "nrf_sdh_soc.h"
-#include "ble_conn_params.h"
-#include "ble_hci.h"
-#include "proxy.h"
 
 /* Provisioning and configuration */
 #include "mesh_provisionee.h"
 #include "mesh_app_utils.h"
-#include "mesh_softdevice_init.h"
 
 /* Models */
 #include "generic_onoff_client.h"
@@ -75,30 +67,12 @@
 #include "nrf_mesh_config_examples.h"
 #include "light_switch_example_common.h"
 #include "example_common.h"
+#include "ble_softdevice_support.h"
 
 #define APP_STATE_OFF                (0)
 #define APP_STATE_ON                 (1)
 
 #define APP_UNACK_MSG_REPEAT_COUNT   (2)
-
-#define DEVICE_NAME                     "CuteBit Switch"
-#define MIN_CONN_INTERVAL               MSEC_TO_UNITS(150,  UNIT_1_25_MS)           /**< Minimum acceptable connection interval. */
-#define MAX_CONN_INTERVAL               MSEC_TO_UNITS(250,  UNIT_1_25_MS)           /**< Maximum acceptable connection interval. */
-#define SLAVE_LATENCY                   0                                           /**< Slave latency. */
-#define CONN_SUP_TIMEOUT                MSEC_TO_UNITS(4000, UNIT_10_MS)             /**< Connection supervisory timeout (4 seconds). */
-#define FIRST_CONN_PARAMS_UPDATE_DELAY  APP_TIMER_TICKS(100)                        /**< Time from initiating event (connect or start of notification) to first time sd_ble_gap_conn_param_update is called. */
-#define NEXT_CONN_PARAMS_UPDATE_DELAY   APP_TIMER_TICKS(2000)                       /**< Time between each call to sd_ble_gap_conn_param_update after the first call. */
-#define MAX_CONN_PARAMS_UPDATE_COUNT    3                                           /**< Number of attempts before giving up the connection parameter negotiation. */
-
-static void gap_params_init(void);
-static void conn_params_init(void);
-
-static void on_sd_evt(uint32_t sd_evt, void * p_context)
-{
-    (void) nrf_mesh_on_sd_evt(sd_evt);
-}
-
-NRF_SDH_SOC_OBSERVER(mesh_observer, NRF_SDH_BLE_STACK_OBSERVER_PRIO, on_sd_evt, NULL);
 
 static generic_onoff_client_t m_clients;
 static bool                   m_device_provisioned;
@@ -119,18 +93,35 @@ const generic_onoff_client_callbacks_t client_cbs =
     .periodic_publish_cb = app_gen_onoff_client_publish_interval_cb
 };
 
+static void device_identification_start_cb(uint8_t attention_duration_s)
+{
+    hal_led_mask_set(LEDS_MASK, false);
+    hal_led_blink_ms(BSP_LED_2_MASK  | BSP_LED_3_MASK, 
+                     LED_BLINK_ATTENTION_INTERVAL_MS, 
+                     LED_BLINK_ATTENTION_COUNT(attention_duration_s));
+}
+
+static void provisioning_aborted_cb(void)
+{
+    hal_led_blink_stop();
+}
+
 static void provisioning_complete_cb(void)
 {
     __LOG(LOG_SRC_APP, LOG_LEVEL_INFO, "Successfully provisioned\n");
 
-    /* Restores the application parameters after switching from the Provisioning service to the Proxy  */
+#if MESH_FEATURE_GATT_ENABLED
+    /* Restores the application parameters after switching from the Provisioning
+     * service to the Proxy  */
     gap_params_init();
     conn_params_init();
+#endif
 
     dsm_local_unicast_address_t node_address;
     dsm_local_unicast_addresses_get(&node_address);
     __LOG(LOG_SRC_APP, LOG_LEVEL_INFO, "Node Address: 0x%04x \n", node_address.address_start);
 
+    hal_led_blink_stop();
     hal_led_mask_set(LEDS_MASK, LED_MASK_STATE_OFF);
     hal_led_blink_ms(LEDS_MASK, LED_BLINK_INTERVAL_MS, LED_BLINK_CNT_PROV);
 }
@@ -213,6 +204,9 @@ static void button_event_handler(uint32_t button_number)
     model_transition_t transition_params;
     static uint8_t tid = 0;
 
+    /* Button 1: On, Button 2: Off, Client[0]
+     * Button 2: On, Button 3: Off, Client[1]
+     */
     if(is_light_on == false)
     {
         set_params.on_off = APP_STATE_ON;
@@ -223,7 +217,20 @@ static void button_event_handler(uint32_t button_number)
         set_params.on_off = APP_STATE_OFF;
         is_light_on = false;
     }
-   
+/*
+    switch(button_number)
+    {
+        case 0:
+        case 2:
+            set_params.on_off = APP_STATE_ON;
+            break;
+
+        case 1:
+        case 3:
+            set_params.on_off = APP_STATE_OFF;
+            break;
+    }
+*/
     set_params.tid = tid++;
     transition_params.delay_ms = APP_CONFIG_ONOFF_DELAY_MS;
     transition_params.transition_time_ms = APP_CONFIG_ONOFF_TRANSITION_TIME_MS;
@@ -235,19 +242,26 @@ static void button_event_handler(uint32_t button_number)
         case 1:
             /* Demonstrate acknowledged transaction, using 1st client model instance */
             /* In this examples, users will not be blocked if the model is busy */
-            (void)access_model_reliable_cancel(m_clients.model_handle);
-            status = generic_onoff_client_set(&m_clients, &set_params, &transition_params);
-            hal_led_pin_set(BSP_LED_0, set_params.on_off);
-            break;
+           // (void)access_model_reliable_cancel(m_clients[0].model_handle);
+           // status = generic_onoff_client_set(&m_clients[0], &set_params, &transition_params);
+           // hal_led_pin_set(BSP_LED_0, set_params.on_off);
+           // break;
 
         case 2:
         case 3:
             /* Demonstrate un-acknowledged transaction, using 2nd client model instance */
-            //status = generic_onoff_client_set_unack(&m_clients, &set_params,
-            //                                        &transition_params, APP_UNACK_MSG_REPEAT_COUNT);
-            //hal_led_pin_set(BSP_LED_1, set_params.on_off);
+           // status = generic_onoff_client_set_unack(&m_clients[1], &set_params,
+           //                                         &transition_params, APP_UNACK_MSG_REPEAT_COUNT);
+           // hal_led_pin_set(BSP_LED_1, set_params.on_off);
+           // break;
+            /* Demonstrate acknowledged transaction, using 1st client model instance */
+            /* In this examples, users will not be blocked if the model is busy */
+            (void)access_model_reliable_cancel(m_clients.model_handle);
+            /* Send out msg */
+            status = generic_onoff_client_set(&m_clients, &set_params, &transition_params);
+            hal_led_pin_set(BSP_LED_0, set_params.on_off);
             break;
-      }
+    }
 
     switch (status)
     {
@@ -296,27 +310,8 @@ static void models_init_cb(void)
     m_clients.settings.force_segmented = APP_CONFIG_FORCE_SEGMENTATION;
     m_clients.settings.transmic_size = APP_CONFIG_MIC_SIZE;
 
-    ERROR_CHECK(generic_onoff_client_init(&m_clients, 0));
-} 
-
-static void on_conn_params_evt(ble_conn_params_evt_t * p_evt)
-{
-    uint32_t err_code;
-
-    if (p_evt->evt_type == BLE_CONN_PARAMS_EVT_FAILED)
-    {
-        err_code = sd_ble_gap_disconnect(p_evt->conn_handle, BLE_HCI_CONN_INTERVAL_UNACCEPTABLE);
-        APP_ERROR_CHECK(err_code);
-    }
-    else if (p_evt->evt_type == BLE_CONN_PARAMS_EVT_SUCCEEDED)
-    {
-        __LOG(LOG_SRC_APP, LOG_LEVEL_INFO, "Successfully updated connection parameters\n");
-    }
-}
-
-static void conn_params_error_handler(uint32_t nrf_error)
-{
-    APP_ERROR_HANDLER(nrf_error);
+    ERROR_CHECK(generic_onoff_client_init(&m_clients, 
+    1));
 }
 
 static void mesh_init(void)
@@ -336,51 +331,9 @@ static void mesh_init(void)
     ERROR_CHECK(mesh_stack_init(&init_params, &m_device_provisioned));
 }
 
-static void gap_params_init(void)
-{
-    uint32_t                err_code;
-    ble_gap_conn_sec_mode_t sec_mode;
-
-    BLE_GAP_CONN_SEC_MODE_SET_OPEN(&sec_mode);
-
-    err_code = sd_ble_gap_device_name_set(&sec_mode,
-                                          (const uint8_t *) DEVICE_NAME,
-                                          strlen(DEVICE_NAME));
-    APP_ERROR_CHECK(err_code);
-}
-
-static void conn_params_init(void)
-{
-    uint32_t               err_code;
-    ble_conn_params_init_t cp_init;
-    ble_gap_conn_params_t  gap_conn_params;
-
-    memset(&gap_conn_params, 0, sizeof(gap_conn_params));
-    gap_conn_params.min_conn_interval = MIN_CONN_INTERVAL;
-    gap_conn_params.max_conn_interval = MAX_CONN_INTERVAL;
-    gap_conn_params.slave_latency     = SLAVE_LATENCY;
-    gap_conn_params.conn_sup_timeout  = CONN_SUP_TIMEOUT;
-
-    err_code = sd_ble_gap_ppcp_set(&gap_conn_params);
-    APP_ERROR_CHECK(err_code);
-
-    memset(&cp_init, 0, sizeof(cp_init));
-    cp_init.p_conn_params                  = &gap_conn_params;
-    cp_init.first_conn_params_update_delay = FIRST_CONN_PARAMS_UPDATE_DELAY;
-    cp_init.next_conn_params_update_delay  = NEXT_CONN_PARAMS_UPDATE_DELAY;
-    cp_init.max_conn_params_update_count   = MAX_CONN_PARAMS_UPDATE_COUNT;
-    cp_init.start_on_notify_cccd_handle    = BLE_GATT_HANDLE_INVALID;
-    cp_init.disconnect_on_fail             = false;
-    cp_init.evt_handler                    = on_conn_params_evt;
-    cp_init.error_handler                  = conn_params_error_handler;
-
-    err_code = ble_conn_params_init(&cp_init);
-    APP_ERROR_CHECK(err_code);
-}
-
 static void initialize(void)
 {
-    __LOG_INIT(LOG_SRC_APP | LOG_SRC_ACCESS, LOG_LEVEL_INFO, LOG_CALLBACK_DEFAULT);
+    __LOG_INIT(LOG_SRC_APP | LOG_SRC_ACCESS | LOG_SRC_BEARER, LOG_LEVEL_INFO, LOG_CALLBACK_DEFAULT);
     __LOG(LOG_SRC_APP, LOG_LEVEL_INFO, "----- BLE Mesh Light Switch Client Demo -----\n");
 
     ERROR_CHECK(app_timer_init());
@@ -389,22 +342,13 @@ static void initialize(void)
 #if BUTTON_BOARD
     ERROR_CHECK(hal_buttons_init(button_event_handler));
 #endif
-    uint32_t err_code = nrf_sdh_enable_request();
-    APP_ERROR_CHECK(err_code);
-#if defined S140 // todo remove that after S140 priority fixing
-    softdevice_irq_priority_checker();
-#endif
 
-    uint32_t ram_start = 0;
-    /* Set the default configuration (as defined through sdk_config.h). */
-    err_code = nrf_sdh_ble_default_cfg_set(MESH_SOFTDEVICE_CONN_CFG_TAG, &ram_start);
-    APP_ERROR_CHECK(err_code);
+    ble_stack_init();
 
-    err_code = nrf_sdh_ble_enable(&ram_start);
-    APP_ERROR_CHECK(err_code);
-
+#if MESH_FEATURE_GATT_ENABLED
     gap_params_init();
     conn_params_init();
+#endif
 
     mesh_init();
 }
@@ -412,7 +356,6 @@ static void initialize(void)
 static void start(void)
 {
     rtt_input_enable(rtt_input_handler, RTT_INPUT_POLL_PERIOD_MS);
-    ERROR_CHECK(mesh_stack_start());
 
     if (!m_device_provisioned)
     {
@@ -422,20 +365,28 @@ static void start(void)
         {
             .p_static_data    = static_auth_data,
             .prov_complete_cb = provisioning_complete_cb,
+            .prov_device_identification_start_cb = device_identification_start_cb,
+            .prov_device_identification_stop_cb = NULL,
+            .prov_abort_cb = provisioning_aborted_cb,
             .p_device_uri = NULL
         };
         ERROR_CHECK(mesh_provisionee_prov_start(&prov_start_params));
     }
 
     const uint8_t *p_uuid = nrf_mesh_configure_device_uuid_get();
+    UNUSED_VARIABLE(p_uuid);
     __LOG_XB(LOG_SRC_APP, LOG_LEVEL_INFO, "Device UUID ", p_uuid, NRF_MESH_UUID_SIZE);
 
+    ERROR_CHECK(mesh_stack_start());
+
+    //hal_led_mask_set(LEDS_MASK, LED_MASK_STATE_OFF);
+    //hal_led_blink_ms(LEDS_MASK, LED_BLINK_INTERVAL_MS, LED_BLINK_CNT_START);
 }
 
 int main(void)
 {
     initialize();
-    execution_start(start);
+    start();
 
     for (;;)
     {
